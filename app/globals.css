@@ -170,6 +170,11 @@ h3 {
   padding: 14px;
 }
 
+.file-target.dragging {
+  background: rgba(11, 122, 92, 0.12);
+  border-color: var(--green);
+}
+
 .file-target input {
   display: none;
 }

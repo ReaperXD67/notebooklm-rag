@@ -12,8 +12,10 @@ import {
   Send,
   Sparkles
 } from "lucide-react";
-import { FormEvent, useMemo, useState } from "react";
+import { DragEvent, FormEvent, useMemo, useState } from "react";
 import type { CitationSource, UploadedDocumentSummary } from "@/lib/types";
+
+const MAX_CLIENT_FILE_BYTES = 4 * 1024 * 1024;
 
 type Message = {
   role: "user" | "assistant";
@@ -55,15 +57,42 @@ export function RagWorkbench() {
   const [error, setError] = useState<string | null>(null);
   const [topK, setTopK] = useState(6);
   const [strictMode, setStrictMode] = useState(true);
+  const [dragging, setDragging] = useState(false);
 
   const lastSources = useMemo(
     () => [...messages].reverse().find((message) => message.sources)?.sources ?? [],
     [messages]
   );
 
+  function chooseFile(nextFile: File | null) {
+    setError(null);
+    if (!nextFile) {
+      setFile(null);
+      return;
+    }
+
+    if (nextFile.size > MAX_CLIENT_FILE_BYTES) {
+      setFile(null);
+      setError("For the live Vercel demo, upload a PDF, TXT, or Markdown file under 4 MB.");
+      return;
+    }
+
+    setFile(nextFile);
+  }
+
+  function handleDrop(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    setDragging(false);
+    chooseFile(event.dataTransfer.files?.[0] ?? null);
+  }
+
   async function handleUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!file) return;
+    if (file.size > MAX_CLIENT_FILE_BYTES) {
+      setError("For the live Vercel demo, upload a PDF, TXT, or Markdown file under 4 MB.");
+      return;
+    }
 
     setUploading(true);
     setError(null);
@@ -162,13 +191,22 @@ export function RagWorkbench() {
           </div>
 
           <form onSubmit={handleUpload} className="upload-box">
-            <label className="file-target">
+            <label
+              className={`file-target ${dragging ? "dragging" : ""}`}
+              onDragEnter={(event) => {
+                event.preventDefault();
+                setDragging(true);
+              }}
+              onDragOver={(event) => event.preventDefault()}
+              onDragLeave={() => setDragging(false)}
+              onDrop={handleDrop}
+            >
               <input
                 type="file"
                 accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
-                onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                onChange={(event) => chooseFile(event.target.files?.[0] ?? null)}
               />
-              <span>{file ? file.name : "Drop a PDF or text file"}</span>
+              <span>{file ? file.name : dragging ? "Release to attach file" : "Click or drop a PDF or text file"}</span>
             </label>
             <button className="primary-button" type="submit" disabled={!file || uploading}>
               <FileUp size={17} />
