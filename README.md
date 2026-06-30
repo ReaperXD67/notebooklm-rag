@@ -13,6 +13,10 @@ AtlasLM is a deployable Google NotebookLM-style RAG app for Assignment 03. It le
 - Evidence UI: every answer shows the chunks, pages, and hybrid scores used.
 - Research lane: TurboQuant memory estimates plus an optional `turbovec` lab script.
 
+## Interview And Deployment Guide
+
+Read `docs/PROJECT_DEEP_DIVE_AND_DEPLOYMENT.md` for the detailed architecture explanation, interviewer talking points, local testing steps, deployment steps, and final submission checklist.
+
 ## Best OpenRouter Models
 
 Use these defaults first:
