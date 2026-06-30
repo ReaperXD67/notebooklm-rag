@@ -7,3 +7,5 @@ dist/
 tmp/
 *.log
 *.tsbuildinfo
+
+.vercel
