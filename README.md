@@ -17,6 +17,8 @@ AtlasLM is a deployable Google NotebookLM-style RAG app for Assignment 03. It le
 
 Read `docs/PROJECT_DEEP_DIVE_AND_DEPLOYMENT.md` for the detailed architecture explanation, interviewer talking points, local testing steps, deployment steps, and final submission checklist.
 
+For a high-level design diagram, see `docs/HLD_DIAGRAM.md`.
+
 ## Best OpenRouter Models
 
 Use these defaults first:
