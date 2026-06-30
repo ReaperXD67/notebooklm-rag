@@ -40,6 +40,23 @@ async function qdrantFetch(path: string, init: RequestInit = {}) {
   return response.json();
 }
 
+async function ensurePayloadIndex(fieldName: string, fieldSchema: "keyword" | "integer"): Promise<void> {
+  const response = await fetch(qdrantUrl(`/collections/${COLLECTION}/index`), {
+    method: "PUT",
+    headers: qdrantHeaders(),
+    body: JSON.stringify({
+      field_name: fieldName,
+      field_schema: fieldSchema
+    })
+  });
+
+  if (response.ok) return;
+
+  const text = await response.text();
+  if (response.status === 400 && /already|exists/i.test(text)) return;
+  throw new Error(`Qdrant payload index setup failed (${response.status}): ${text}`);
+}
+
 function documentFilter(documentId: string) {
   return {
     must: [
@@ -66,6 +83,7 @@ export async function ensureCollection(vectorSize: number): Promise<void> {
         }
       })
     });
+    await ensurePayloadIndex("documentId", "keyword");
     return;
   }
 
@@ -81,6 +99,8 @@ export async function ensureCollection(vectorSize: number): Promise<void> {
       `Qdrant collection ${COLLECTION} has vector size ${existingSize}, but this embedding model returned ${vectorSize}. Use a new QDRANT_COLLECTION or matching embedding model.`
     );
   }
+
+  await ensurePayloadIndex("documentId", "keyword");
 }
 
 export async function upsertChunks(chunks: DocumentChunk[], vectors: number[][]): Promise<void> {

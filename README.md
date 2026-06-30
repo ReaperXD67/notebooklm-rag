@@ -21,10 +21,10 @@ Read `docs/PROJECT_DEEP_DIVE_AND_DEPLOYMENT.md` for the detailed architecture ex
 
 Use these defaults first:
 
-- Generation: `google/gemini-2.5-flash`
+- Generation: `google/gemini-2.5-flash-lite`
 - Embeddings: `openai/text-embedding-3-small`
 
-Why: Gemini Flash is fast and cost-efficient for grounded answers, while OpenAI's small embedding model is cheap and strong enough for course-scale retrieval. For a premium demo, switch generation to a stronger reasoning model on OpenRouter and keep the same retrieval stack.
+Why: Gemini Flash-Lite is the safest low-cost choice for a small OpenRouter balance, while OpenAI's small embedding model is cheap and strong enough for course-scale retrieval. For a premium demo, switch generation to `google/gemini-2.5-flash` or a stronger reasoning model and keep the same retrieval stack.
 
 ## Local Setup
 

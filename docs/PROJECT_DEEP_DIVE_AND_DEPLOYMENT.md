@@ -196,10 +196,10 @@ This is important because the LLM's answer quality depends heavily on the qualit
 
 The final answer is generated through OpenRouter.
 
-Default generation model:
+Default low-cost generation model:
 
 ```text
-google/gemini-2.5-flash
+google/gemini-2.5-flash-lite
 ```
 
 The system prompt tells the model:
@@ -304,7 +304,7 @@ I used Qdrant because it gives me filtered vector search by document ID, works l
 ### On Model Choice
 
 ```text
-I route models through OpenRouter so I can switch generation models without rewriting the app. I used Gemini Flash as the default because it is fast and cost-effective for grounded answers.
+I route models through OpenRouter so I can switch generation models without rewriting the app. I used Gemini Flash-Lite for the demo because it is cost-safe, and I can upgrade the same pipeline to stronger models without changing the retrieval layer.
 ```
 
 ### On Debugging
@@ -339,7 +339,7 @@ The `.env.local` file should look like:
 
 ```bash
 OPENROUTER_API_KEY=sk-or-v1-your-key
-OPENROUTER_MODEL=google/gemini-2.5-flash
+OPENROUTER_MODEL=google/gemini-2.5-flash-lite
 OPENROUTER_EMBEDDING_MODEL=openai/text-embedding-3-small
 QDRANT_URL=https://your-qdrant-cluster-url
 QDRANT_API_KEY=your-qdrant-api-key
@@ -455,7 +455,7 @@ Environment variables:
 
 ```bash
 OPENROUTER_API_KEY=...
-OPENROUTER_MODEL=google/gemini-2.5-flash
+OPENROUTER_MODEL=google/gemini-2.5-flash-lite
 OPENROUTER_EMBEDDING_MODEL=openai/text-embedding-3-small
 QDRANT_URL=...
 QDRANT_API_KEY=...
@@ -514,4 +514,3 @@ Before submitting:
 5. A PDF upload works on the live app.
 6. A grounded answer appears with citations.
 7. The README and docs are visible in the repo.
-
