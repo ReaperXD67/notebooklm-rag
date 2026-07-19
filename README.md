@@ -1,89 +1,95 @@
-# AtlasLM RAG
+# AtlasLM
 
-AtlasLM is a deployable Google NotebookLM-style RAG app for Assignment 03. It lets a user upload a PDF, TXT, or Markdown file, indexes the content into Qdrant, and answers questions only from retrieved document chunks.
+AtlasLM is an evidence-first document intelligence workbench built for Assignment 03. Upload an unseen PDF, TXT, or Markdown document, ask questions, and inspect not only the answer but the retrieval evidence, confidence, citations, evaluation checks, and execution trace behind it.
 
-## What It Implements
+This is not a three-chunk vector-search demo. It implements a cost-aware, inspectable RAG pipeline with a real Qdrant 1.18 TurboQuant index.
 
-- Ingestion: PDF and plain text upload through a Next.js API route.
-- Chunking: page-aware recursive semantic windows with overlap and heading carry-forward.
-- Embeddings: OpenRouter embeddings, defaulting to `openai/text-embedding-3-small`.
-- Vector database: Qdrant Cloud or local Qdrant.
-- Retrieval: dense vector search + BM25 keyword scoring + MMR diversity selection.
-- Generation: OpenRouter chat model with strict source-grounded prompt and citations.
-- Evidence UI: every answer shows the chunks, pages, and hybrid scores used.
-- Research lane: TurboQuant memory estimates plus an optional `turbovec` lab script.
+## Production Checklist
 
-## Interview And Deployment Guide
+| Requirement | AtlasLM implementation |
+| --- | --- |
+| Ingest + normalize | PDF line reconstruction, repeated-margin removal, metadata, content fingerprints, deterministic chunk IDs, exact deduplication |
+| Hybrid retrieval | Qdrant dense ANN + local BM25, fused with Reciprocal Rank Fusion (RRF) |
+| ANN + reranking | Wide candidate retrieval, feature reranking, MMR diversity; optional LLM listwise reranker in Precision mode |
+| Source confidence | Score agreement, query-term coverage, top-score strength, citation audit, and evidence sufficiency |
+| Constrained generation | The model receives retrieved source passages and a source-only prompt with prompt-injection isolation |
+| Citation-backed answers | Claims cite inspectable `[S1]` sources with page, heading, retrieval scores, and rank changes |
+| Hallucination fallback | Pre-generation sufficiency gate and post-generation citation audit can abstain or block a draft |
+| Continuous evals | Unit/eval suite, per-response grounding checks, and a live adversarial missing-fact probe |
+| Caching + memory | Conversation-aware retrieval query plus document-scoped semantic answer cache |
+| Observability | Per-request trace ID, timed pipeline spans, token use, cache state, and retrieval counters |
 
-Read `docs/PROJECT_DEEP_DIVE_AND_DEPLOYMENT.md` for the detailed architecture explanation, interviewer talking points, local testing steps, deployment steps, and final submission checklist.
+## Architecture
 
-For a high-level design diagram, see `docs/HLD_DIAGRAM.md`.
+```text
+Upload -> normalize -> contextual chunks -> dedupe -> embed -> Qdrant TurboQuant
+Question -> conversational rewrite -> dense ANN + BM25 -> RRF -> rerank -> MMR
+         -> sufficiency gate -> grounded generation -> citation audit -> answer/evidence/trace
+```
 
-## Best OpenRouter Models
+See [the HLD](docs/HLD_DIAGRAM.md), [pipeline details](docs/RAG_ARCHITECTURE.md), and the [research and interview guide](docs/RESEARCH_AND_INTERVIEW_GUIDE.md).
 
-Use these defaults first:
+## Fastest Local Test
 
-- Generation: `google/gemini-2.5-flash-lite`
-- Embeddings: `openai/text-embedding-3-small`
+Requirements: Docker Desktop and an OpenRouter key.
 
-Why: Gemini Flash-Lite is the safest low-cost choice for a small OpenRouter balance, while OpenAI's small embedding model is cheap and strong enough for course-scale retrieval. For a premium demo, switch generation to `google/gemini-2.5-flash` or a stronger reasoning model and keep the same retrieval stack.
+```powershell
+Copy-Item .env.example .env.local
+# Put your OPENROUTER_API_KEY in .env.local
+docker compose up --build
+```
 
-## Local Setup
+Open [http://localhost:3002](http://localhost:3002). Qdrant runs at `http://localhost:6333` and persists data in a Docker volume.
 
-```bash
+Stop the stack with:
+
+```powershell
+docker compose down
+```
+
+## Run Without Docker
+
+Start Qdrant 1.18 separately, set `QDRANT_URL=http://localhost:6333`, then:
+
+```powershell
 npm install
-copy .env.example .env.local
-```
-
-Run Qdrant locally:
-
-```bash
-docker run -p 6333:6333 qdrant/qdrant
-```
-
-For local Qdrant, set:
-
-```bash
-QDRANT_URL=http://localhost:6333
-QDRANT_API_KEY=
-```
-
-Start the app:
-
-```bash
 npm run dev
 ```
 
-## Live Deployment
+Next.js defaults to [http://localhost:3000](http://localhost:3000). If that port is occupied, use `npm run dev -- -p 3002`.
 
-Recommended public setup:
+## Models And Cost Controls
 
-1. Create a public GitHub repository and push this folder.
-2. Create a free Qdrant Cloud cluster.
-3. Deploy the repository on Vercel.
-4. Add these environment variables in Vercel:
-   - `OPENROUTER_API_KEY`
-   - `OPENROUTER_MODEL`
-   - `OPENROUTER_EMBEDDING_MODEL`
-   - `QDRANT_URL`
-   - `QDRANT_API_KEY`
-   - `QDRANT_COLLECTION`
-   - `APP_URL`
+Defaults are intentionally economical:
 
-The live project link must point to the Vercel deployment, not localhost.
+- Generation: `google/gemini-2.5-flash-lite`
+- Precision reranker/judge: `google/gemini-2.5-flash-lite`
+- Embeddings: `openai/text-embedding-3-small`
+- Efficient mode: local feature reranking, one answer-generation call
+- Precision mode: one additional listwise reranking and sufficiency call
+- Semantic cache: reuses an audited answer for a near-identical question in the same document workspace
 
-## Grounding Policy
-
-The answer prompt explicitly forbids general-knowledge answers. If retrieved chunks do not contain the needed evidence, the assistant must say what is missing. The UI also exposes the source chunks, so hallucinations are easier to catch during evaluation.
+Do not commit `.env.local`. Rotate any API key that has been pasted into a chat or screenshot.
 
 ## Verification
 
-```bash
-npm run typecheck
-npm test
-npm run build
+```powershell
+npm run quality
+npm run eval
 ```
 
-## TurboQuant Note
+The quality command runs TypeScript checks, the Vitest suite, and a production Next.js build. GitHub Actions runs the same checks on pushes and pull requests.
 
-Google's TurboQuant research is about aggressive vector compression. The production app uses Qdrant because the assignment requires a vector database and a public deployment path. The app still shows an estimated FP32 versus 4-bit memory reduction and includes `scripts/turbovec_lab.py` for a research-mode experiment using open-source TurboQuant-inspired tooling.
+## Deployment
+
+1. Push the public repository to GitHub.
+2. Create a Qdrant Cloud cluster running Qdrant 1.18 or newer.
+3. Import the repository into Vercel.
+4. Add the variables from `.env.example` to Vercel.
+5. Set `APP_URL` to the deployed HTTPS URL and redeploy.
+
+AtlasLM negotiates TurboQuant support when creating its collection. A Qdrant cluster older than 1.18 falls back to an uncompressed collection instead of making ingestion unusable.
+
+## Honest Scope
+
+AtlasLM currently indexes one uploaded source workspace at a time in the UI. Its cache is instance-local, so a production multi-instance deployment should move it to Redis. It does not claim OCR, audio generation, collaborative notebooks, or full GraphRAG. The focus is high-quality grounded retrieval, abstention, transparency, and a reproducible evaluation surface.

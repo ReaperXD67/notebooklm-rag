@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chunkPages, estimateTokens } from "@/lib/chunking";
+import { chunkPages, createDocumentIdentity, deduplicateChunks, estimateTokens } from "@/lib/chunking";
 
 describe("chunkPages", () => {
   it("keeps page metadata and creates bounded chunks", () => {
@@ -12,6 +12,7 @@ describe("chunkPages", () => {
     expect(chunks.length).toBeGreaterThan(1);
     expect(chunks.every((chunk) => chunk.pageNumber === 3)).toBe(true);
     expect(chunks.every((chunk) => estimateTokens(chunk.text) <= 850)).toBe(true);
+    expect(chunks.every((chunk) => chunk.retrievalText.includes("Document: node.pdf"))).toBe(true);
   });
 
   it("captures simple section headings", () => {
@@ -22,5 +23,23 @@ describe("chunkPages", () => {
     );
 
     expect(chunks[0].heading).toBe("DEBUGGING BASICS");
+  });
+
+  it("creates stable document identities and removes exact duplicate chunks", () => {
+    const first = createDocumentIdentity(Buffer.from("same content"));
+    const second = createDocumentIdentity(Buffer.from("same content"));
+    expect(first).toEqual(second);
+
+    const chunks = chunkPages(
+      [
+        { pageNumber: 1, text: "A repeated passage with enough detail to become a useful source chunk." },
+        { pageNumber: 2, text: "A repeated passage with enough detail to become a useful source chunk." }
+      ],
+      first.documentId,
+      "repeat.txt"
+    );
+    const result = deduplicateChunks(chunks);
+    expect(result.removed).toBe(1);
+    expect(result.chunks).toHaveLength(1);
   });
 });

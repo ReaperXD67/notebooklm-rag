@@ -1,109 +1,109 @@
-# AtlasLM HLD Diagram
+# AtlasLM High-Level Design
 
-## Overall System Flow
+## End-To-End Flow
 
 ```mermaid
 flowchart TB
-    U["User"] --> UI["Next.js Frontend\nUpload + Chat + Evidence Panel"]
+    User["Researcher"] --> UI["AtlasLM workbench<br/>Upload, chat, evidence, trace, evals"]
 
-    UI --> UploadAPI["/api/documents\nDocument Ingestion API"]
-    UploadAPI --> Parser["Document Parser\nPDF / TXT / Markdown"]
-    Parser --> Chunker["Page-Aware Chunker\n720 token target + overlap"]
-    Chunker --> EmbedDocs["OpenRouter Embeddings\ntext-embedding-3-small"]
-    EmbedDocs --> QdrantWrite["Qdrant Cloud\nVector Upsert + Payload Metadata"]
+    subgraph Ingestion["Content-addressed ingestion"]
+        Upload["PDF / TXT / Markdown"] --> Normalize["Parse + normalize<br/>Remove repeated margins"]
+        Normalize --> Identity["SHA-256 fingerprint<br/>Deterministic document and chunk IDs"]
+        Identity --> Chunk["Page-aware contextual chunks<br/>640 tokens + 80 overlap"]
+        Chunk --> Dedupe["Exact content deduplication"]
+        Dedupe --> EmbedDoc["OpenRouter embeddings"]
+        EmbedDoc --> VectorDB["Qdrant 1.18 HNSW<br/>TurboQuant 4-bit + payload metadata"]
+    end
 
-    UI --> ChatAPI["/api/chat\nQuestion Answering API"]
-    ChatAPI --> EmbedQuery["OpenRouter Embeddings\nQuery Vector"]
-    EmbedQuery --> DenseSearch["Qdrant Dense Search\nFiltered by documentId"]
-    ChatAPI --> BM25["BM25 Lexical Search\nExact term matching"]
-    DenseSearch --> Fusion["Hybrid Score Fusion\nDense + BM25"]
-    BM25 --> Fusion
-    Fusion --> MMR["MMR Selection\nRelevant + non-repetitive chunks"]
-    MMR --> Context["Grounded Context Builder\n[S1], [S2], page numbers"]
-    Context --> LLM["OpenRouter Chat Model\nGemini 2.5 Flash-Lite"]
-    LLM --> Answer["Grounded Answer\nCitations required"]
-    Answer --> UI
-    MMR --> UIEvidence["Evidence Panel\nChunks + scores + pages"]
-    UIEvidence --> UI
+    UI --> Upload
+
+    subgraph Retrieval["Two-stage evidence retrieval"]
+        Question["Question + recent conversation"] --> EmbedQuery["Query embedding"]
+        EmbedQuery --> ANN["Filtered Qdrant ANN<br/>Wide candidate set"]
+        Question --> BM25["BM25 lexical retrieval"]
+        ANN --> RRF["Reciprocal Rank Fusion"]
+        BM25 --> RRF
+        RRF --> Feature["Feature reranker"]
+        Feature --> Precision{"Precision mode?"}
+        Precision -->|"Yes"| Listwise["LLM listwise rerank<br/>+ sufficiency judge"]
+        Precision -->|"No"| MMR["MMR evidence diversity"]
+        Listwise --> MMR
+    end
+
+    UI --> Question
+    VectorDB --> ANN
+    VectorDB --> BM25
+
+    subgraph Grounding["Grounding and verification"]
+        MMR --> Gate{"Evidence sufficient?"}
+        Gate -->|"No"| Abstain["Evidence-based abstention"]
+        Gate -->|"Yes"| Generate["Constrained source-only generation"]
+        Generate --> Audit{"Citation audit passes?"}
+        Audit -->|"No"| Block["Block unsupported draft"]
+        Audit -->|"Yes"| Answer["Cited answer"]
+        Abstain --> Result["Answer + evidence + confidence"]
+        Block --> Result
+        Answer --> Result
+    end
+
+    Result --> UI
+    Result --> Eval["Per-response grounding evals"]
+    Result --> Cache["Document-scoped semantic cache"]
+    Retrieval --> Trace["Trace ID + timed spans + counters"]
+    Grounding --> Trace
+    Eval --> UI
+    Trace --> UI
 ```
 
-## Component View
-
-```mermaid
-flowchart LR
-    subgraph Client["Client Layer"]
-        A["RagWorkbench UI"]
-        B["File Upload"]
-        C["Chat Input"]
-        D["Evidence Viewer"]
-    end
-
-    subgraph App["Next.js Server Layer"]
-        E["Document API"]
-        F["Chat API"]
-        G["Chunking Module"]
-        H["Retrieval Orchestrator"]
-        I["Grounding Prompt Builder"]
-    end
-
-    subgraph External["External Services"]
-        J["OpenRouter\nEmbeddings"]
-        K["OpenRouter\nGeneration"]
-        L["Qdrant Cloud\nVector DB"]
-    end
-
-    B --> E
-    E --> G
-    G --> J
-    J --> L
-
-    C --> F
-    F --> J
-    F --> H
-    H --> L
-    H --> I
-    I --> K
-    K --> A
-    H --> D
-```
-
-## Request Flow
-
-1. User uploads a PDF, TXT, or Markdown document.
-2. The document ingestion API extracts readable text.
-3. The chunker splits text into page-aware overlapping chunks.
-4. Each chunk is embedded using OpenRouter embeddings.
-5. Chunks and metadata are stored in Qdrant Cloud.
-6. User asks a natural language question.
-7. The question is embedded.
-8. Qdrant retrieves semantically similar chunks.
-9. BM25 scores exact keyword relevance across document chunks.
-10. Hybrid fusion combines semantic and lexical relevance.
-11. MMR selects the most useful non-repetitive chunks.
-12. The LLM receives only retrieved source context.
-13. The answer is returned with citations like `[S1]`.
-14. The UI shows source chunks, page numbers, and retrieval scores.
-
-## Grounding Boundary
+## Request Sequence
 
 ```mermaid
 sequenceDiagram
-    participant User
-    participant UI as Frontend
-    participant API as Chat API
-    participant VDB as Qdrant
-    participant LLM as OpenRouter LLM
+    actor User
+    participant UI as Next.js UI
+    participant API as RAG API
+    participant OR as OpenRouter
+    participant Q as Qdrant 1.18
 
-    User->>UI: Ask question
-    UI->>API: documentId + question
-    API->>VDB: Search only chunks for documentId
-    VDB-->>API: Relevant chunks
-    API->>API: BM25 + hybrid fusion + MMR
-    API->>LLM: Question + retrieved chunks only
-    LLM-->>API: Cited grounded answer
-    API-->>UI: Answer + source evidence
-    UI-->>User: Show answer and citations
+    User->>UI: Upload unseen document
+    UI->>API: multipart file
+    API->>API: normalize, contextualize, dedupe
+    API->>OR: embed chunk retrieval text
+    OR-->>API: vectors
+    API->>Q: create TurboQuant collection + upsert
+    Q-->>UI: indexed document summary
+
+    User->>UI: Ask a question
+    UI->>API: question, history, mode, topK
+    API->>OR: embed conversational retrieval query
+    par Dense lane
+        API->>Q: filtered ANN search
+    and Lexical lane
+        API->>Q: fetch active document corpus
+        API->>API: BM25
+    end
+    API->>API: RRF, rerank, MMR, sufficiency gate
+    alt insufficient evidence
+        API-->>UI: abstention + reasons + trace
+    else sufficient evidence
+        API->>OR: numbered evidence + constrained prompt
+        OR-->>API: cited draft
+        API->>API: citation audit + evals + cache
+        API-->>UI: answer + interactive sources + trace
+    end
 ```
 
-The main grounding rule is that the LLM never receives the whole internet or a general prompt alone. It receives the user question plus selected chunks from the uploaded document, and the prompt requires citation-backed answers.
+## Deployment Topology
 
+```mermaid
+flowchart LR
+    Browser["Browser"] --> Vercel["Vercel<br/>Next.js application"]
+    Vercel --> OpenRouter["OpenRouter<br/>embeddings + LLM"]
+    Vercel --> QCloud["Qdrant Cloud 1.18+<br/>vectors + metadata"]
+
+    Developer["Developer"] --> Docker["Docker Compose"]
+    Docker --> LocalApp["AtlasLM :3002"]
+    Docker --> LocalQ["Qdrant 1.18 :6333"]
+    LocalApp --> OpenRouter
+    LocalApp --> LocalQ
+```

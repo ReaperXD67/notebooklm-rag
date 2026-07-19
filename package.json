@@ -8,7 +8,11 @@
     "build": "next build",
     "start": "next start",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "eval": "vitest run src/tests/grounding.test.ts src/tests/scoring.test.ts",
+    "quality": "npm run typecheck && npm test && npm run build",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down"
   },
   "overrides": {
     "postcss": "^8.5.10"

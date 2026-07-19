@@ -23,11 +23,12 @@ function qdrantHeaders() {
   };
 }
 
-async function qdrantFetch(path: string, init: RequestInit = {}) {
+async function qdrantFetch(path: string, init: RequestInit = {}, traceId?: string) {
   const response = await fetch(qdrantUrl(path), {
     ...init,
     headers: {
       ...qdrantHeaders(),
+      ...(traceId ? { "x-tracing-id": traceId } : {}),
       ...(init.headers ?? {})
     }
   });
@@ -68,23 +69,91 @@ function documentFilter(documentId: string) {
   };
 }
 
-export async function ensureCollection(vectorSize: number): Promise<void> {
+const turboQuantConfig = {
+  turbo: {
+    bits: "bits4",
+    always_ram: true
+  }
+};
+
+function turboQuantEnabled(): boolean {
+  return process.env.QDRANT_TURBOQUANT !== "false";
+}
+
+async function createCollection(vectorSize: number, traceId?: string): Promise<boolean> {
+  const baseConfig = {
+    vectors: {
+      size: vectorSize,
+      distance: "Cosine"
+    },
+    hnsw_config: {
+      m: 16,
+      ef_construct: 128
+    },
+    metadata: {
+      application: "AtlasLM",
+      retrieval: "contextual-hybrid-rrf"
+    }
+  };
+  const wantsTurbo = turboQuantEnabled();
   const response = await fetch(qdrantUrl(`/collections/${COLLECTION}`), {
-    headers: qdrantHeaders()
+    method: "PUT",
+    headers: {
+      ...qdrantHeaders(),
+      ...(traceId ? { "x-tracing-id": traceId } : {})
+    },
+    body: JSON.stringify({
+      ...baseConfig,
+      ...(wantsTurbo ? { quantization_config: turboQuantConfig } : {})
+    })
+  });
+
+  if (response.ok) return wantsTurbo;
+  const text = await response.text();
+  const unsupportedTurbo =
+    wantsTurbo && [400, 422].includes(response.status) && /turbo|quantization|variant|unknown/i.test(text);
+  if (!unsupportedTurbo) {
+    throw new Error(`Qdrant collection creation failed (${response.status}): ${text}`);
+  }
+
+  await qdrantFetch(`/collections/${COLLECTION}`, {
+    method: "PUT",
+    body: JSON.stringify(baseConfig)
+  }, traceId);
+  return false;
+}
+
+async function enableTurboQuant(traceId?: string): Promise<boolean> {
+  if (!turboQuantEnabled()) return false;
+  try {
+    await qdrantFetch(`/collections/${COLLECTION}`, {
+      method: "PATCH",
+      body: JSON.stringify({ quantization_config: turboQuantConfig })
+    }, traceId);
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (/400|404|422|turbo|quantization|variant|unknown/i.test(message)) return false;
+    throw error;
+  }
+}
+
+export async function ensureCollection(
+  vectorSize: number,
+  traceId?: string
+): Promise<{ quantizationAvailable: boolean }> {
+  const response = await fetch(qdrantUrl(`/collections/${COLLECTION}`), {
+    headers: {
+      ...qdrantHeaders(),
+      ...(traceId ? { "x-tracing-id": traceId } : {})
+    }
   });
 
   if (response.status === 404) {
-    await qdrantFetch(`/collections/${COLLECTION}`, {
-      method: "PUT",
-      body: JSON.stringify({
-        vectors: {
-          size: vectorSize,
-          distance: "Cosine"
-        }
-      })
-    });
+    const quantizationAvailable = await createCollection(vectorSize, traceId);
     await ensurePayloadIndex("documentId", "keyword");
-    return;
+    await ensurePayloadIndex("contentHash", "keyword");
+    return { quantizationAvailable };
   }
 
   if (!response.ok) {
@@ -100,10 +169,14 @@ export async function ensureCollection(vectorSize: number): Promise<void> {
     );
   }
 
+  const existingQuantization = json.result?.config?.quantization_config;
+  const quantizationAvailable = existingQuantization?.turbo ? true : await enableTurboQuant(traceId);
   await ensurePayloadIndex("documentId", "keyword");
+  await ensurePayloadIndex("contentHash", "keyword");
+  return { quantizationAvailable };
 }
 
-export async function upsertChunks(chunks: DocumentChunk[], vectors: number[][]): Promise<void> {
+export async function upsertChunks(chunks: DocumentChunk[], vectors: number[][], traceId?: string): Promise<void> {
   const points = chunks.map((chunk, index) => ({
     id: chunk.id,
     vector: vectors[index],
@@ -114,16 +187,18 @@ export async function upsertChunks(chunks: DocumentChunk[], vectors: number[][])
       pageNumber: chunk.pageNumber,
       heading: chunk.heading ?? null,
       text: chunk.text,
+      retrievalText: chunk.retrievalText,
       tokenEstimate: chunk.tokenEstimate,
       charStart: chunk.charStart,
-      charEnd: chunk.charEnd
+      charEnd: chunk.charEnd,
+      contentHash: chunk.contentHash
     }
   }));
 
   await qdrantFetch(`/collections/${COLLECTION}/points?wait=true`, {
     method: "PUT",
     body: JSON.stringify({ points })
-  });
+  }, traceId);
 }
 
 function pointToChunk(point: QdrantPoint, fallbackDocumentId: string): DocumentChunk {
@@ -136,16 +211,19 @@ function pointToChunk(point: QdrantPoint, fallbackDocumentId: string): DocumentC
     pageNumber: Number(payload.pageNumber ?? 1),
     heading: payload.heading ? String(payload.heading) : undefined,
     text: String(payload.text ?? ""),
+    retrievalText: String(payload.retrievalText ?? payload.text ?? ""),
     tokenEstimate: Number(payload.tokenEstimate ?? 0),
     charStart: Number(payload.charStart ?? 0),
-    charEnd: Number(payload.charEnd ?? 0)
+    charEnd: Number(payload.charEnd ?? 0),
+    contentHash: String(payload.contentHash ?? "")
   };
 }
 
 export async function searchDenseChunks(
   documentId: string,
   vector: number[],
-  limit: number
+  limit: number,
+  traceId?: string
 ): Promise<Array<DocumentChunk & { vectorScore: number }>> {
   const json = await qdrantFetch(`/collections/${COLLECTION}/points/search`, {
     method: "POST",
@@ -157,10 +235,15 @@ export async function searchDenseChunks(
       with_vector: false,
       params: {
         hnsw_ef: 128,
-        exact: false
+        exact: false,
+        quantization: {
+          ignore: false,
+          rescore: true,
+          oversampling: 1.5
+        }
       }
     })
-  });
+  }, traceId);
 
   return (json.result ?? []).map((point: QdrantPoint) => ({
     ...pointToChunk(point, documentId),
@@ -168,7 +251,11 @@ export async function searchDenseChunks(
   }));
 }
 
-export async function scrollDocumentChunks(documentId: string, maxChunks = 1200): Promise<DocumentChunk[]> {
+export async function scrollDocumentChunks(
+  documentId: string,
+  maxChunks = 1200,
+  traceId?: string
+): Promise<DocumentChunk[]> {
   const chunks: DocumentChunk[] = [];
   let offset: string | number | undefined;
 
@@ -182,7 +269,7 @@ export async function scrollDocumentChunks(documentId: string, maxChunks = 1200)
         with_payload: true,
         with_vector: false
       })
-    });
+    }, traceId);
 
     const points = json.result?.points ?? [];
     chunks.push(...points.map((point: QdrantPoint) => pointToChunk(point, documentId)));

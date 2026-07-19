@@ -1,24 +1,25 @@
-# AtlasLM vs NotebookLM Report
+# AtlasLM And NotebookLM: An Honest Comparison
 
-## Positioning
-
-NotebookLM is excellent for end users, but it is a closed product. AtlasLM is built for evaluators who need to see the retrieval pipeline and code quality.
-
-## Comparison
+NotebookLM is a polished Google research product with capabilities AtlasLM does not claim to replace, including a mature multi-source workflow and generated Audio Overviews. AtlasLM's advantage for this assignment is not brand-scale feature parity. It is that the entire RAG system is inspectable, configurable, deployable, and measurable.
 
 | Area | NotebookLM | AtlasLM |
 | --- | --- | --- |
-| Retrieval visibility | Hidden | Shows chunks, pages, and scores |
-| Vector DB control | Closed | Qdrant collection with payload filters |
-| Chunking strategy | Hidden | Documented page-aware recursive windows |
-| Grounding | Product-level citations | Prompt rules plus visible retrieved evidence |
-| Deployment | Google product | Your public GitHub and live Vercel app |
-| Research extensibility | Closed | TurboQuant lab and memory estimates |
+| Retrieval implementation | Managed and closed | Open TypeScript modules for ANN, BM25, RRF, reranking, and MMR |
+| Evidence visibility | User-facing citations | Citations plus source text, page, five retrieval scores, and rank movement |
+| Failure behavior | Product-managed | Visible sufficiency gate, exact-identifier checks, abstention, and citation audit |
+| Vector infrastructure | Not user configurable | Qdrant 1.18 HNSW with real 4-bit TurboQuant and fallback negotiation |
+| Cost controls | Product-managed | Efficient/Precision modes, pre-generation abstention, semantic cache, token trace |
+| Observability | Limited product telemetry | Trace ID, timed spans, counters, model, tokens, cache state, fallback details |
+| Evaluation | Product-managed | Unit tests, CI, per-response checks, and live adversarial canary |
+| Deployment and code | Closed service | Public repository, Docker Compose, Vercel, replaceable providers |
+| Audio, OCR, collaboration | Mature product features | Not currently claimed |
 
-## Why Prefer AtlasLM For This Assignment
+## Positioning For An Interview
 
-AtlasLM proves the complete RAG pipeline instead of only demonstrating a chat UI. The evaluator can inspect ingestion, chunking, embedding, storage, retrieval, generation, and citation behavior directly in the repository.
+Do not say “AtlasLM is better than NotebookLM at everything.” Say:
 
-The comparison visual is available at:
+> NotebookLM inspired the interaction model. AtlasLM explores a different question: what would a transparent, evidence-gated, cost-aware RAG system look like if an engineer needed to inspect every decision and swap every component?
 
-`public/report/notebooklm-comparison.svg`
+That claim is strong because the evaluator can verify it in the Evidence, Trace, Evals, and Stack panels and in the source code.
+
+The existing presentation graphic is at `public/report/notebooklm-comparison.svg`; treat it as assignment positioning, while this document is the precise technical comparison.

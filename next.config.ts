@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["pdf-parse"]
+  serverExternalPackages: ["pdf-parse"],
+  output: "standalone"
 };
 
 export default nextConfig;

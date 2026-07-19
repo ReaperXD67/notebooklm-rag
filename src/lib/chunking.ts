@@ -1,12 +1,12 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { ChunkStrategy, DocumentChunk, SourcePage } from "./types";
 
 export const DEFAULT_CHUNK_STRATEGY: ChunkStrategy = {
-  name: "page-aware recursive semantic windows",
-  targetTokens: 720,
-  overlapTokens: 90,
+  name: "contextual page-aware semantic windows",
+  targetTokens: 640,
+  overlapTokens: 80,
   description:
-    "The parser keeps page boundaries for citations, detects simple headings, splits oversized paragraphs into sentence windows, and adds overlap so answers retain local context."
+    "Page boundaries and headings stay citation-safe while deterministic neighbor context is added only to the retrieval representation. Exact duplicate chunks are removed before embedding."
 };
 
 const HEADING_MAX_WORDS = 16;
@@ -79,6 +79,70 @@ function lastWords(text: string, tokenBudget: number): string {
   return text.split(/\s+/).filter(Boolean).slice(-wordBudget).join(" ");
 }
 
+function firstWords(text: string, tokenBudget: number): string {
+  const wordBudget = Math.max(16, Math.floor(tokenBudget / 1.32));
+  return text.split(/\s+/).filter(Boolean).slice(0, wordBudget).join(" ");
+}
+
+function hashText(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
+function uuidFromHash(hash: string): string {
+  const value = hash.slice(0, 32).split("");
+  value[12] = "4";
+  value[16] = ((Number.parseInt(value[16], 16) & 0x3) | 0x8).toString(16);
+  const compact = value.join("");
+  return `${compact.slice(0, 8)}-${compact.slice(8, 12)}-${compact.slice(12, 16)}-${compact.slice(16, 20)}-${compact.slice(20)}`;
+}
+
+export function createDocumentIdentity(content: Buffer): { documentId: string; fingerprint: string } {
+  const fingerprint = createHash("sha256").update(content).digest("hex");
+  return { documentId: uuidFromHash(fingerprint), fingerprint };
+}
+
+function contextualizeChunks(chunks: DocumentChunk[]): DocumentChunk[] {
+  return chunks.map((chunk, index) => {
+    const previous = chunks[index - 1];
+    const next = chunks[index + 1];
+    const context = [
+      `Document: ${chunk.sourceName}`,
+      `Location: page ${chunk.pageNumber}${chunk.heading ? `, section ${chunk.heading}` : ""}`,
+      previous?.pageNumber === chunk.pageNumber
+        ? `Previous passage: ${lastWords(previous.text, 42)}`
+        : undefined,
+      next?.pageNumber === chunk.pageNumber ? `Following passage: ${firstWords(next.text, 30)}` : undefined
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    return {
+      ...chunk,
+      id: uuidFromHash(hashText(`${chunk.documentId}:${chunk.pageNumber}:${chunk.chunkIndex}:${chunk.contentHash}`)),
+      retrievalText: `${context}\n\nPassage:\n${chunk.text}`
+    };
+  });
+}
+
+export function deduplicateChunks(chunks: DocumentChunk[]): {
+  chunks: DocumentChunk[];
+  removed: number;
+} {
+  const seen = new Set<string>();
+  const unique = chunks.filter((chunk) => {
+    const signature = hashText(normalizeText(chunk.text).toLowerCase());
+    if (seen.has(signature)) return false;
+    seen.add(signature);
+    return true;
+  });
+
+  const reindexed = unique.map((chunk, chunkIndex) => ({ ...chunk, chunkIndex }));
+  return {
+    chunks: contextualizeChunks(reindexed),
+    removed: chunks.length - unique.length
+  };
+}
+
 export function chunkPages(
   pages: SourcePage[],
   documentId: string,
@@ -99,17 +163,20 @@ export function chunkPages(
       const text = normalizeText(buffer.join("\n\n"));
       if (!text || (!force && estimateTokens(text) < 80)) return;
 
+      const contentHash = hashText(text);
       chunks.push({
-        id: randomUUID(),
+        id: uuidFromHash(hashText(`${documentId}:${page.pageNumber}:${chunkIndex}:${contentHash}`)),
         documentId,
         chunkIndex,
         sourceName,
         pageNumber: page.pageNumber,
         heading: activeHeading,
         text,
+        retrievalText: text,
         tokenEstimate: estimateTokens(text),
         charStart: chunkStart,
-        charEnd: chunkStart + text.length
+        charEnd: chunkStart + text.length,
+        contentHash
       });
       chunkIndex += 1;
 
@@ -147,5 +214,5 @@ export function chunkPages(
     flush(true);
   }
 
-  return chunks;
+  return contextualizeChunks(chunks);
 }
