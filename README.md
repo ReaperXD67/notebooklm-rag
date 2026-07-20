@@ -4,6 +4,8 @@ AtlasLM is an evidence-first document intelligence workbench built for Assignmen
 
 This is not a three-chunk vector-search demo. It implements a cost-aware, inspectable RAG pipeline with a real Qdrant 1.18 TurboQuant index.
 
+Its live Corpus Field turns chunks and retrieved passages into an animated, interactive evidence topology. Query packets, active citations, and source links are visual system state rather than decorative animation.
+
 ## Production Checklist
 
 | Requirement | AtlasLM implementation |

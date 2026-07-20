@@ -22,22 +22,19 @@ import {
   GraduationCap,
   Hash,
   Layers3,
-  ListChecks,
   LockKeyhole,
-  MessageSquareText,
   Network,
   RefreshCw,
   ScanSearch,
   Send,
   ShieldCheck,
-  Sparkles,
   TimerReset,
   UploadCloud,
   WandSparkles,
   X,
   Zap
 } from "lucide-react";
-import { DragEvent, FormEvent, KeyboardEvent, ReactNode, useMemo, useState } from "react";
+import { DragEvent, FormEvent, KeyboardEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import type {
   CitationSource,
   RagAnswerResponse,
@@ -159,6 +156,230 @@ function Metric({ label, value, icon }: { label: string; value: ReactNode; icon:
     <div className="metric-cell">
       <span>{icon}{label}</span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+type FieldNode = {
+  x: number;
+  y: number;
+  radius: number;
+  sourceId?: string;
+};
+
+function CorpusField({
+  document,
+  sources,
+  activeSourceId,
+  asking,
+  onSourceSelect
+}: {
+  document: UploadedDocumentSummary | null;
+  sources: CitationSource[];
+  activeSourceId: string | null;
+  asking: boolean;
+  onSourceSelect: (id: string) => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const frameRef = useRef<number | null>(null);
+  const pointerRef = useRef({ x: -1000, y: -1000 });
+  const nodesRef = useRef<FieldNode[]>([]);
+  const palette = ["#dfff57", "#4fd8cd", "#ff5c50", "#7d8cff", "#ffbf3f"];
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const resizeObserver = new ResizeObserver(() => {
+      const bounds = canvas.getBoundingClientRect();
+      const ratio = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.max(1, Math.round(bounds.width * ratio));
+      canvas.height = Math.max(1, Math.round(bounds.height * ratio));
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    });
+    resizeObserver.observe(canvas);
+
+    const draw = (time: number) => {
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+      if (!width || !height) {
+        frameRef.current = requestAnimationFrame(draw);
+        return;
+      }
+
+      const sourceCount = sources.length;
+      const nodeCount = sourceCount || Math.min(34, Math.max(16, document?.chunkCount ?? 22));
+      const centerX = width * 0.52;
+      const centerY = height * 0.51;
+      const motion = reducedMotion ? 0 : time * 0.00035;
+      const pointer = pointerRef.current;
+      const nextNodes: FieldNode[] = [];
+
+      context.clearRect(0, 0, width, height);
+      context.fillStyle = "#080a09";
+      context.fillRect(0, 0, width, height);
+
+      context.strokeStyle = "rgba(242, 240, 231, 0.08)";
+      context.lineWidth = 1;
+      for (let x = 24; x < width; x += 48) {
+        context.beginPath();
+        context.moveTo(x + 0.5, 0);
+        context.lineTo(x + 0.5, height);
+        context.stroke();
+      }
+      for (let y = 24; y < height; y += 48) {
+        context.beginPath();
+        context.moveTo(0, y + 0.5);
+        context.lineTo(width, y + 0.5);
+        context.stroke();
+      }
+
+      const fieldRadius = Math.min(width * 0.42, height * 0.7);
+      for (let index = 0; index < nodeCount; index += 1) {
+        const source = sources[index];
+        const angle = index * 2.399963 + motion * (index % 2 === 0 ? 1 : -0.7);
+        const ring = 0.2 + ((index * 7) % 17) / 21;
+        const horizontal = fieldRadius * ring * (width > 700 ? 1.35 : 0.92);
+        const vertical = fieldRadius * ring * 0.72;
+        let x = centerX + Math.cos(angle) * horizontal;
+        let y = centerY + Math.sin(angle) * vertical;
+        const pointerDistance = Math.hypot(pointer.x - x, pointer.y - y);
+        if (pointerDistance < 110) {
+          const force = (110 - pointerDistance) / 110;
+          x += (x - pointer.x) * force * 0.18;
+          y += (y - pointer.y) * force * 0.18;
+        }
+        const strength = source ? Math.max(0.15, source.rerankScore) : 0.22 + ((index * 13) % 30) / 100;
+        nextNodes.push({ x, y, radius: source ? 4 + strength * 6 : 2 + (index % 4), sourceId: source?.id });
+      }
+      nodesRef.current = nextNodes;
+
+      context.lineWidth = 1;
+      nextNodes.forEach((node, index) => {
+        const source = sources[index];
+        const active = source?.id === activeSourceId;
+        context.strokeStyle = active ? "rgba(223,255,87,0.78)" : `rgba(242,240,231,${source ? 0.2 : 0.08})`;
+        context.setLineDash(index % 3 === 0 ? [3, 6] : []);
+        context.beginPath();
+        context.moveTo(centerX, centerY);
+        context.lineTo(node.x, node.y);
+        context.stroke();
+        context.setLineDash([]);
+
+        if (index > 0 && (index < 12 || sourceCount > 0)) {
+          const previous = nextNodes[index - 1];
+          context.strokeStyle = "rgba(79,216,205,0.12)";
+          context.beginPath();
+          context.moveTo(previous.x, previous.y);
+          context.lineTo(node.x, node.y);
+          context.stroke();
+        }
+
+        const packetProgress = (motion * (asking ? 4.6 : 1.8) + index / Math.max(1, nodeCount)) % 1;
+        const packetX = centerX + (node.x - centerX) * packetProgress;
+        const packetY = centerY + (node.y - centerY) * packetProgress;
+        context.fillStyle = palette[index % palette.length];
+        context.fillRect(packetX - 1.5, packetY - 1.5, 3, 3);
+      });
+
+      nextNodes.forEach((node, index) => {
+        const source = sources[index];
+        const active = source?.id === activeSourceId;
+        const color = palette[index % palette.length];
+        if (active || (asking && index < 6)) {
+          context.strokeStyle = active ? "#dfff57" : "rgba(79,216,205,0.55)";
+          context.lineWidth = 1;
+          context.beginPath();
+          context.arc(node.x, node.y, node.radius + 7 + Math.sin(motion * 8 + index) * 2, 0, Math.PI * 2);
+          context.stroke();
+        }
+        context.fillStyle = color;
+        context.beginPath();
+        context.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+        context.fill();
+        context.fillStyle = "#080a09";
+        context.beginPath();
+        context.arc(node.x, node.y, Math.max(1.2, node.radius * 0.34), 0, Math.PI * 2);
+        context.fill();
+
+        if (source) {
+          context.fillStyle = active ? "#dfff57" : "rgba(242,240,231,0.72)";
+          context.font = "700 10px ui-monospace, monospace";
+          context.fillText(source.citation.replace(/[\[\]]/g, ""), node.x + node.radius + 6, node.y + 3);
+        }
+      });
+
+      context.strokeStyle = asking ? "#dfff57" : "#f2f0e7";
+      context.lineWidth = 1.5;
+      context.beginPath();
+      context.arc(centerX, centerY, 19 + Math.sin(motion * 5) * 3, 0, Math.PI * 2);
+      context.stroke();
+      context.fillStyle = asking ? "#dfff57" : "#f2f0e7";
+      context.fillRect(centerX - 3, centerY - 3, 6, 6);
+
+      if (!reducedMotion) {
+        const scanY = ((time * (asking ? 0.12 : 0.045)) % (height + 80)) - 40;
+        context.strokeStyle = asking ? "rgba(223,255,87,0.48)" : "rgba(79,216,205,0.24)";
+        context.lineWidth = 1;
+        context.beginPath();
+        context.moveTo(0, scanY);
+        context.lineTo(width, scanY);
+        context.stroke();
+      }
+
+      if (pointer.x > 0 && pointer.y > 0) {
+        context.strokeStyle = "rgba(255,92,80,0.55)";
+        context.beginPath();
+        context.moveTo(pointer.x - 10, pointer.y);
+        context.lineTo(pointer.x + 10, pointer.y);
+        context.moveTo(pointer.x, pointer.y - 10);
+        context.lineTo(pointer.x, pointer.y + 10);
+        context.stroke();
+      }
+
+      frameRef.current = requestAnimationFrame(draw);
+    };
+
+    frameRef.current = requestAnimationFrame(draw);
+    return () => {
+      resizeObserver.disconnect();
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+    };
+  }, [activeSourceId, asking, document?.chunkCount, sources]);
+
+  return (
+    <div className={`corpus-field ${document ? "indexed" : "unindexed"} ${asking ? "is-querying" : ""}`}>
+      <canvas
+        ref={canvasRef}
+        aria-label={document ? `Interactive corpus field for ${document.name}` : "Animated empty corpus field"}
+        onPointerMove={(event) => {
+          const bounds = event.currentTarget.getBoundingClientRect();
+          pointerRef.current = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+        }}
+        onPointerLeave={() => { pointerRef.current = { x: -1000, y: -1000 }; }}
+        onClick={(event) => {
+          if (!sources.length) return;
+          const bounds = event.currentTarget.getBoundingClientRect();
+          const x = event.clientX - bounds.left;
+          const y = event.clientY - bounds.top;
+          const closest = nodesRef.current
+            .map((node) => ({ node, distance: Math.hypot(node.x - x, node.y - y) }))
+            .sort((a, b) => a.distance - b.distance)[0];
+          if (closest?.node.sourceId && closest.distance < 28) onSourceSelect(closest.node.sourceId);
+        }}
+      />
+      <div className="field-hud field-hud-top">
+        <span>Corpus field / live</span>
+        <strong>{asking ? "Tracing query path" : document ? "Evidence topology" : "Awaiting source"}</strong>
+      </div>
+      <div className="field-hud field-hud-bottom">
+        <span>{document ? `${document.chunkCount} chunks` : "synthetic idle field"}</span>
+        <span>{sources.length ? `${sources.length} sources mapped` : "move to disturb"}</span>
+      </div>
+      <div className="field-index" aria-hidden="true">{document ? "01" : "00"}</div>
     </div>
   );
 }
@@ -322,10 +543,10 @@ export function RagWorkbench() {
     <main className="app-shell">
       <header className="command-bar">
         <div className="brand-lockup">
-          <div className="brand-mark"><BrainCircuit size={22} /></div>
+          <div className="brand-mark"><span>A</span></div>
           <div>
-            <p>AtlasLM</p>
-            <span>Evidence operating system</span>
+            <p>ATLAS<span>/LM</span></p>
+            <small>Evidence instrument</small>
           </div>
         </div>
 
@@ -341,7 +562,10 @@ export function RagWorkbench() {
 
         <div className="system-badge">
           <span className="live-dot" />
-          <div><strong>10 / 10</strong><small>production checks</small></div>
+          <div>
+            <strong><span className="status-wide">GROUND TRUTH</span><span className="status-narrow">10 / 10</span></strong>
+            <small>10 / 10 systems online</small>
+          </div>
         </div>
       </header>
 
@@ -433,7 +657,7 @@ export function RagWorkbench() {
           </div>
         </aside>
 
-        <section className="conversation-stage">
+        <section className={`conversation-stage ${messages.length ? "has-thread" : ""}`}>
           <div className="conversation-heading">
             <div>
               <p className="micro-label">Grounded thread</p>
@@ -445,13 +669,24 @@ export function RagWorkbench() {
             </div>
           </div>
 
-          <div className="message-stream" aria-live="polite">
+          <CorpusField
+            document={document}
+            sources={lastResult?.sources ?? []}
+            activeSourceId={activeSourceId}
+            asking={asking || uploading}
+            onSourceSelect={(id) => {
+              setActiveSourceId(id);
+              setInspectorTab("evidence");
+            }}
+          />
+
+          <div className={`message-stream ${messages.length ? "has-messages" : "is-empty"}`} aria-live="polite">
             {messages.length === 0 && (
               <div className="empty-workspace">
-                <div className="empty-signal"><Sparkles size={22} /></div>
-                <p className="micro-label">Research canvas</p>
-                <h1>{document ? "Interrogate the evidence." : "Bring a document into focus."}</h1>
-                <p>{document ? "Every claim will be routed back through retrieval, sufficiency, and citation checks." : "Upload an unseen PDF or text source. AtlasLM will build a inspectable evidence index around it."}</p>
+                <div className="empty-signal"><span>↳</span></div>
+                <p className="micro-label">Research desk / 001</p>
+                <h1>{document ? "Ask what the page can prove." : "Make the document reveal its structure."}</h1>
+                <p>{document ? "Every answer travels through retrieval, sufficiency, and citation checks before it reaches this desk." : "Drop an unseen source. AtlasLM will map its evidence as a living, inspectable field."}</p>
                 <div className="quick-grid">
                   {quickActions.map(({ label, prompt, icon: Icon }) => (
                     <button key={label} type="button" disabled={!document} onClick={() => void askQuestion(prompt)}>

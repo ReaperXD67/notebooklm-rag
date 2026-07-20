@@ -195,6 +195,7 @@ Recent evidence-based abstention research argues that a single scalar confidence
 AtlasLM's interface is designed as an operational research workbench rather than a decorative chat page.
 
 - **Source control:** upload, identity, dedupe, indexing latency, vector dimensions, and quantization state.
+- **Corpus Field:** a live canvas maps chunks and retrieved sources into a clickable topology; moving packets, scan lines, and active nodes reflect retrieval state.
 - **Retrieval controls:** Efficient/Precision segmented control, evidence-depth slider, and Strict grounding toggle.
 - **Grounded thread:** questions and answers remain the center of the workflow.
 - **Evidence console:** inspect passages, scores, pages, and rank changes.
